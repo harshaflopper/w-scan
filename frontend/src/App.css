@@ -1,0 +1,151 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   App-level layout styles
+───────────────────────────────────────────────────────────────────────────── */
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2rem;
+  height: 56px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+}
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header-logo {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Main content */
+.app-main {
+  flex: 1;
+  padding: 2rem;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* Upload screen */
+.upload-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 3rem;
+}
+
+.drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 560px;
+  height: 220px;
+  border: 2px dashed var(--border-bright);
+  border-radius: var(--r-xl);
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--bg-card);
+}
+.drop-zone:hover {
+  border-color: var(--teal);
+  background: var(--teal-glow);
+}
+.drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.upload-tips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 480px;
+  width: 100%;
+  margin-top: 2rem;
+}
+.tip-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+}
+.tip-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  background: var(--teal-glow);
+  color: var(--teal);
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Configure screen */
+.configure-screen {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 1.5rem;
+  align-items: start;
+}
+.configure-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.configure-right {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Results screen */
+.results-screen {
+  width: 100%;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .configure-screen {
+    grid-template-columns: 1fr;
+  }
+  .results-screen > div:last-child {
+    grid-template-columns: 1fr !important;
+  }
+}
+@media (max-width: 640px) {
+  .app-main { padding: 1rem; }
+  .app-header { padding: 0 1rem; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
