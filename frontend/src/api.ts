@@ -1,4 +1,4 @@
-// API helpers — all calls go through Vite proxy → FastAPI backend
+// API helpers
 
 import type { AnalysisResult, CoinOption } from "./types";
 
@@ -10,26 +10,46 @@ export async function fetchCoins(): Promise<CoinOption[]> {
   return res.json();
 }
 
+export interface BoxCoords { x1: number; y1: number; x2: number; y2: number; }
+
+export interface SuggestBoxResponse {
+  wound_found: boolean;
+  wound_type: string;
+  wound_type_confidence: number;
+  wound_type_reasoning: string;
+  bbox_px: BoxCoords | null;
+  photo_quality: { pass: boolean; issues: string[]; advice?: string };
+  gemini_ok: boolean;
+  fallback_message?: string;
+}
+
+export async function suggestBox(image: File): Promise<SuggestBoxResponse> {
+  const form = new FormData();
+  form.append("image", image);
+  const res = await fetch(`${BASE}/suggest-box`, { method: "POST", body: form });
+  if (!res.ok) throw new Error("suggest-box failed");
+  return res.json();
+}
+
 export interface AnalyzePayload {
   image: File;
   coinType: string;
   patientId?: string;
-  // Click coords now optional — Gemini auto-detects wound
-  clickX?: number;
-  clickY?: number;
+  box: BoxCoords;  // confirmed box in original image pixels — required
+  woundType?: string; // from suggest-box, avoids duplicate Gemini call
 }
 
 export async function analyzeWound(payload: AnalyzePayload): Promise<AnalysisResult> {
   const form = new FormData();
-  form.append("image", payload.image);
+  form.append("image",     payload.image);
   form.append("coin_type", payload.coinType);
-
-  if (payload.patientId)
-    form.append("patient_id", payload.patientId);
-  if (payload.clickX !== undefined)
-    form.append("click_x", String(Math.round(payload.clickX)));
-  if (payload.clickY !== undefined)
-    form.append("click_y", String(Math.round(payload.clickY)));
+  form.append("box_x1",   String(Math.round(payload.box.x1)));
+  form.append("box_y1",   String(Math.round(payload.box.y1)));
+  form.append("box_x2",   String(Math.round(payload.box.x2)));
+  form.append("box_y2",   String(Math.round(payload.box.y2)));
+  if (payload.patientId) form.append("patient_id", payload.patientId);
+  if (payload.woundType) form.append("wound_type", payload.woundType);
+  if (payload.patientId) form.append("patient_id", payload.patientId);
 
   const res = await fetch(`${BASE}/analyze`, { method: "POST", body: form });
   if (!res.ok) {

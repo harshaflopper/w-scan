@@ -17,19 +17,40 @@ Medical references embedded in prompts:
 
 from __future__ import annotations
 import json, os, re
+import numpy as np
 from PIL import Image
 import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
 
 
-def _model(system: str | None = None) -> genai.GenerativeModel:
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    kwargs: dict = {"model_name": "gemini-2.5-flash"}
+import random
+
+def _model(system: str | None = None, json_schema: dict | None = None) -> genai.GenerativeModel:
+    keys = []
+    if "GEMINI_API_KEY" in os.environ: keys.append(os.environ["GEMINI_API_KEY"])
+    if "GEMINI_API_KEY_1" in os.environ: keys.append(os.environ["GEMINI_API_KEY_1"])
+    if "GEMINI_API_KEY_2" in os.environ: keys.append(os.environ["GEMINI_API_KEY_2"])
+    
+    if not keys:
+        raise ValueError("No GEMINI_API_KEY found")
+        
+    api_key = random.choice(keys)
+    genai.configure(api_key=api_key)
+    gen_cfg: dict = {"temperature": 0.1}  # low temp = consistent medical scoring
+    if json_schema:
+        gen_cfg["response_mime_type"] = "application/json"
+        gen_cfg["response_schema"]    = json_schema
+    kwargs: dict = {
+        "model_name":        "gemini-2.5-flash",
+        "generation_config": GenerationConfig(**gen_cfg),
+    }
     if system:
         kwargs["system_instruction"] = system
     return genai.GenerativeModel(**kwargs)
 
 
 def _parse(text: str) -> dict:
+    """Robustly parse JSON from Gemini response (fallback if schema not used)."""
     text = text.strip()
     m = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
     if m:
@@ -153,10 +174,86 @@ Return ONLY valid JSON:
 }"""
 
 
-def assess_bwat(image_pil: Image.Image) -> dict:
-    """Role B: Full 12-item BWAT + TIME framework from image."""
-    resp = _model().generate_content([_BWAT_PROMPT, image_pil])
-    return _parse(resp.text)
+# response_schema for BWAT — guarantees valid JSON structure
+_BWAT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "chain_of_thought": {"type": "STRING"},
+        "bwat": {
+            "type": "OBJECT",
+            "properties": {
+                k: {"type": "OBJECT", "properties": {
+                    "score": {"type": "INTEGER"}, "finding": {"type": "STRING"}
+                }, "required": ["score", "finding"]}
+                for k in ["depth","edges","undermining","necrotic_type",
+                          "necrotic_amount","exudate_type","exudate_amount",
+                          "skin_color","edema","induration","granulation","epithelialization"]
+            }
+        },
+        "bwat_total": {"type": "INTEGER"},
+        "bwat_severity": {"type": "STRING", "enum": ["healing","mild","moderate","severe"]},
+        "bwat_interpretation": {"type": "STRING"},
+        "TIME": {"type": "OBJECT", "properties": {
+            "T": {"type": "STRING"}, "I": {"type": "STRING"},
+            "M": {"type": "STRING"}, "E": {"type": "STRING"},
+        }, "required": ["T","I","M","E"]},
+        "healing_phase": {"type": "STRING",
+            "enum": ["inflammatory","proliferative","remodeling","chronic_stalled","unknown"]},
+        "depth_classification": {"type": "STRING"},
+        "moisture_balance": {"type": "STRING",
+            "enum": ["dry","moist","wet","macerated"]},
+        "infection_signs_visual": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "biofilm_suspected": {"type": "BOOLEAN"},
+        "overall_concern": {"type": "STRING",
+            "enum": ["low","moderate","high","urgent"]},
+        "assessment_limitations": {"type": "STRING"},
+    },
+    "required": ["chain_of_thought","bwat","bwat_total","bwat_severity",
+                 "TIME","healing_phase","moisture_balance"],
+}
+
+_BWAT_MULTIIMAGE_HEADER = """
+You are given 3 views of the SAME wound region (already cropped to the wound):
+  Image 1 — Original photo: assess overall tissue colour, exudate, borders
+  Image 2 — CLAHE contrast-enhanced: assess tissue boundaries, depth detail
+  Image 3 — LAB a* colour map: RED = high a* (granulation), BLUE = low a* (slough/healthy skin)
+             Use this to validate your tissue type estimates.
+
+Assess ONLY the tissue visible in these images. Ignore any background.
+
+Step 1 (chain_of_thought): Describe what you see in each image.
+Step 2: Score each BWAT item using all 3 views together.
+Step 3: Compute total and severity.
+"""
+
+
+def assess_bwat(
+    image_pil: Image.Image,
+    box_px: dict | None = None,
+    crop_rgb: np.ndarray | None = None,
+    wound_mask: np.ndarray | None = None,
+) -> dict:
+    """Role B: Full 12-item BWAT + TIME framework.
+    Sends 3 image views (original + CLAHE + LAB map) when crop available.
+    """
+    from cv.colorimetry import crop_to_box, prepare_gemini_images
+
+    if box_px and crop_rgb is not None:
+        # Multi-image path: 3 processed views of the wound crop
+        img_a, img_b, img_c = prepare_gemini_images(crop_rgb)
+        content = [_BWAT_MULTIIMAGE_HEADER + _BWAT_PROMPT, img_a, img_b, img_c]
+    elif box_px:
+        # Crop from PIL
+        cropped = crop_to_box(image_pil, box_px)
+        content = [_BWAT_MULTIIMAGE_HEADER + _BWAT_PROMPT, cropped]
+    else:
+        content = [_BWAT_PROMPT, image_pil]
+
+    resp = _model(json_schema=_BWAT_SCHEMA).generate_content(content)
+    try:
+        return json.loads(resp.text)
+    except Exception:
+        return _parse(resp.text)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -187,13 +284,18 @@ Return ONLY valid JSON:
 }}"""
 
 
-def validate_tissue(image_pil: Image.Image, tissue: dict) -> dict:
-    """Role C: Cross-check SegFormer tissue percentages against visual inspection."""
+def validate_tissue(
+    image_pil: Image.Image,
+    tissue: dict,
+    box_px: dict | None = None,
+) -> dict:
+    """Role C: Cross-check SegFormer tissue percentages against visual inspection.
+    Uses cropped wound region when box_px is provided.
+    """
+    from cv.colorimetry import crop_to_box
+
     conf = tissue.get("model_confidence", {})
-    if isinstance(conf, dict):
-        conf_tier = conf.get("tier", "UNKNOWN")
-    else:
-        conf_tier = str(conf) if conf else "UNKNOWN"
+    conf_tier = conf.get("tier", "UNKNOWN") if isinstance(conf, dict) else "UNKNOWN"
 
     prompt = _VALIDATE_TEMPLATE.format(
         gran=tissue.get("granulation_pct", 0),
@@ -202,7 +304,9 @@ def validate_tissue(image_pil: Image.Image, tissue: dict) -> dict:
         epithelial=tissue.get("epithelial_pct", 0),
         confidence=conf_tier,
     )
-    resp = _model().generate_content([prompt, image_pil])
+
+    img = crop_to_box(image_pil, box_px) if box_px else image_pil
+    resp = _model().generate_content([prompt, img])
     return _parse(resp.text)
 
 
@@ -301,13 +405,15 @@ WOUND HEALING PHYSIOLOGY:
 RULES:
 1. Apply the correct scoring tool for the detected wound type
 2. Compute NERDS and STONES scores from visible signs + BWAT findings
-3. Apply 40% rule for DFU if ≥4 weeks of history available
-4. Apply 50% rule for VLU if ≥12 weeks of history available
-5. Flag red flags FIRST in the response
-6. Give specific dressing recommendations per wound type and moisture balance
-7. Reference guidelines by name when making recommendations
-8. Be honest about uncertainty — if image quality limits assessment, say so
-9. Generate both a clinician report AND patient plain-English message"""
+3. If Gilman parameter (gilman_velocity_cm_per_week) is < 0.1 cm/week and history exists, classify as STALLED.
+4. PROACTIVE DRESSING MATCHMAKER (MANDATORY):
+   - If High Exudate (Moisture) + Slough: Suggest Calcium Alginate or Hydrofiber.
+   - If Low Exudate + Granulation: Suggest Hydrocolloid or simple Foam.
+   - If Stalled + High Slough: Suggest Enzymatic Debridement (e.g. Collagenase Santyl).
+   - If Infection (NERDS >= 3): Suggest Silver/Antimicrobial dressing.
+5. In `patient_message`, DO NOT use jargon (like "BWAT" or "Epibolic"). If stalled, proactively explain exactly what dressing/ointment they should switch to using the matchmaker rules above.
+6. Give specific dressing recommendations per wound type and moisture balance in `care_plan`.
+7. Generate both a clinician report AND patient plain-English message"""
 
 _CLINICAL_TEMPLATE = """WOUND ASSESSMENT DATA — Session {session_number}
 
@@ -387,6 +493,7 @@ TASK: Generate a complete clinical assessment. Return ONLY valid JSON:
   "infection_risk": "LOW|MODERATE|HIGH|CRITICAL",
   "healing_trajectory": "IMPROVING|STATIC|WORSENING|FIRST_SESSION",
   "healing_velocity_cm2_per_day": 0.0,
+  "gilman_velocity_cm_per_week": {gilman_parameter},
   "area_reduction_pct": null,
   "forty_percent_rule": {{
     "applicable": false,
@@ -434,8 +541,13 @@ def clinical_report(
     inflammation: dict,
     session_number: int,
     session_history: list[dict],
+    box_px: dict | None = None,
+    colorimetry: dict | None = None,
 ) -> dict:
-    """Role D: Full evidence-based clinical synthesis using Gemini Flash."""
+    """Role D: Full evidence-based clinical synthesis using Gemini Flash.
+    - Uses cropped wound image (box_px) instead of full photo
+    - Injects LAB colorimetry data as additional context
+    """
 
     # Build session history text
     if session_history:
@@ -465,6 +577,7 @@ def clinical_report(
         circularity=float(cv_metrics.get("circularity", 0)),
         longest_axis_cm=float(cv_metrics.get("longest_axis_cm", 0)),
         shortest_axis_cm=float(cv_metrics.get("shortest_axis_cm", 0)),
+        gilman_parameter=cv_metrics.get("gilman_parameter_cm_per_week") or "null",
         tissue_source=tissue.get("tissue_source", "cv_model"),
         granulation_pct=float(tissue.get("granulation_pct", 0)),
         slough_pct=float(tissue.get("slough_pct", 0)),
@@ -489,5 +602,25 @@ def clinical_report(
         history_section=history_section,
     )
 
-    resp = _model(system=_CLINICAL_SYSTEM).generate_content([prompt, image_pil])
+    # Inject colorimetry context into prompt if available
+    if colorimetry and not colorimetry.get("colorimetry_failed"):
+        color_ctx = (
+            f"\nLAB COLORIMETRY (objective pixel analysis, Wannous 2010):\n"
+            f"  Mean L*={colorimetry.get('mean_L',0):.1f} "
+            f"a*={colorimetry.get('mean_a',0):.1f} "
+            f"b*={colorimetry.get('mean_b',0):.1f}\n"
+            f"  (high a*=more granulation, high b*=more slough, low L*=necrotic/dark)\n"
+            f"  Colorimetry tissue: gran={colorimetry.get('granulation_pct',0):.0f}% "
+            f"slough={colorimetry.get('slough_pct',0):.0f}% "
+            f"necrotic={colorimetry.get('necrotic_pct',0):.0f}%"
+        )
+        prompt = prompt.replace(
+            "TASK: Generate", color_ctx + "\n\nTASK: Generate"
+        )
+
+    # Use cropped wound image for Role D too
+    from cv.colorimetry import crop_to_box
+    img = crop_to_box(image_pil, box_px) if box_px else image_pil
+
+    resp = _model(system=_CLINICAL_SYSTEM).generate_content([prompt, img])
     return _parse(resp.text)

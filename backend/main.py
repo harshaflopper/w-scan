@@ -35,6 +35,7 @@ from cv.quality_gate import check_image_quality
 from cv.calibration import get_px_per_mm, COIN_LABELS
 from cv.geometry import compute_geometry, generate_annotated_overlay
 from cv.periwound import compute_inflammation_index, generate_inflammation_heatmap
+from cv.colorimetry import lab_tissue_analysis, three_way_tissue_blend, crop_to_box
 from scoring.engine import ClinicalScoringEngine
 from db.session_store import save_session, get_session_history, get_session_count
 
@@ -102,12 +103,110 @@ def _load_image(upload: UploadFile):
     return pil, rgb, bgr
 
 
-def _safe_gemini(fn, *args, fallback=None, label="gemini"):
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=4, max=60),
+    retry=retry_if_exception_type(Exception),
+    reraise=True
+)
+def _call_with_retry(fn, *args, **kwargs):
+    return fn(*args, **kwargs)
+
+def _safe_gemini(fn, *args, fallback=None, label="gemini", **kwargs):
     try:
-        return fn(*args)
+        return _call_with_retry(fn, *args, **kwargs)
     except Exception as e:
-        print(f"[{label}] failed: {e}")
+        print(f"[{label}] failed after retries: {e}")
         return fallback if fallback is not None else {}
+
+
+def _segment_with_box(image_rgb: np.ndarray, box: dict, segmenter, mock_mode: bool) -> np.ndarray:
+    """
+    Segment wound using confirmed box prompt.
+    For small wounds (box < 2% image area): crop + upscale → segment → downscale back.
+    """
+    import cv2
+    h, w = image_rgb.shape[:2]
+    x1, y1, x2, y2 = box["x1"], box["y1"], box["x2"], box["y2"]
+    box_area = (x2 - x1) * (y2 - y1)
+    image_area = h * w
+
+    if mock_mode or box_area >= 0.02 * image_area:
+        # Standard: run box prompt on full image
+        return segmenter.segment_with_box(image_rgb, x1, y1, x2, y2)
+
+    # Small wound path: crop + upscale for MedSAM
+    pad_x = max(10, int((x2 - x1) * 0.25))
+    pad_y = max(10, int((y2 - y1) * 0.25))
+    cx1, cy1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
+    cx2, cy2 = min(w, x2 + pad_x), min(h, y2 + pad_y)
+
+    crop = image_rgb[cy1:cy2, cx1:cx2]
+    ch, cw = crop.shape[:2]
+
+    # Upscale so min dimension ≥ 512
+    scale = max(512 / cw, 512 / ch, 1.0)
+    nw, nh = int(cw * scale), int(ch * scale)
+    upscaled = cv2.resize(crop, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+
+    # Box coords in upscaled space
+    ux1 = int((x1 - cx1) * scale)
+    uy1 = int((y1 - cy1) * scale)
+    ux2 = int((x2 - cx1) * scale)
+    uy2 = int((y2 - cy1) * scale)
+
+    small_mask = segmenter.segment_with_box(upscaled, ux1, uy1, ux2, uy2)
+
+    # Downscale mask back to crop size
+    mask_crop = cv2.resize(
+        small_mask.astype(np.uint8), (cw, ch),
+        interpolation=cv2.INTER_NEAREST,
+    ).astype(bool)
+
+    # Place in full image canvas
+    full_mask = np.zeros((h, w), dtype=bool)
+    full_mask[cy1:cy2, cx1:cx2] = mask_crop
+    return full_mask
+
+
+# ── /suggest-box — fast Gemini wound localization ────────────────────────────
+@app.post("/suggest-box")
+async def suggest_box(image: UploadFile = File(...)):
+    """
+    Called immediately after photo upload (before user does anything).
+    Returns Gemini's suggested bounding box + wound type in ~1.5s.
+    """
+    try:
+        raw = await image.read()
+        pil = Image.open(io.BytesIO(raw)).convert("RGB")
+        from ai.gemini_vision import localize_wound
+        result = localize_wound(pil)
+        bbox = result.get("bbox_px")
+        if bbox:
+            w, h = pil.size
+            bbox = {
+                "x1": max(0, bbox["x1"]), "y1": max(0, bbox["y1"]),
+                "x2": min(w, bbox["x2"]), "y2": min(h, bbox["y2"]),
+            }
+        return {
+            "wound_found":            result.get("wound_found", False),
+            "wound_type":             result.get("wound_type", "unknown"),
+            "wound_type_confidence":  result.get("wound_type_confidence", 0),
+            "wound_type_reasoning":   result.get("wound_type_reasoning", ""),
+            "bbox_px":                bbox,
+            "photo_quality":          result.get("photo_quality", {"pass": True, "issues": []}),
+            "gemini_ok":              "error" not in result,
+        }
+    except Exception as e:
+        return {
+            "wound_found": False, "gemini_ok": False,
+            "bbox_px": None, "wound_type": "unknown",
+            "wound_type_confidence": 0, "wound_type_reasoning": "",
+            "photo_quality": {"pass": True, "issues": []},
+            "fallback_message": f"AI detection failed — draw box manually. ({e})",
+        }
 
 
 # ── Utility endpoints ─────────────────────────────────────────────────────────
@@ -134,24 +233,23 @@ def get_patient_history(patient_id: str, limit: int = 20):
 
 
 # ── Main analysis endpoint ────────────────────────────────────────────────────
+# ── Main analysis endpoint ────────────────────────────────────────────────────
 @app.post("/analyze")
 async def analyze_wound(
     image:      UploadFile       = File(...),
     coin_type:  str              = Form(...),
     patient_id: Optional[str]   = Form(None),
-    # Legacy / fallback click coords (used if Gemini bbox not available)
-    click_x:    Optional[int]   = Form(None),
-    click_y:    Optional[int]   = Form(None),
-    # Legacy temporal fields (kept for backward compat)
-    prev_area_cm2:           Optional[float] = Form(None),
-    prev_perimeter_cm:       Optional[float] = Form(None),
-    prev_composite_score:    Optional[float] = Form(None),
-    prev_date:               Optional[str]   = Form(None),
-    initial_area_cm2:        Optional[float] = Form(None),
-    initial_perimeter_cm:    Optional[float] = Form(None),
+    wound_type: Optional[str]   = Form(None),
+    # Confirmed wound bounding box in original image pixels (from BoxDrawCanvas)
+    box_x1:    int               = Form(...),
+    box_y1:    int               = Form(...),
+    box_x2:    int               = Form(...),
+    box_y2:    int               = Form(...),
 ):
+    box_px = {"x1": box_x1, "y1": box_y1, "x2": box_x2, "y2": box_y2}
     if _segmenter is None or _tissue_clf is None:
         raise HTTPException(503, "Models not loaded. Check logs or set MOCK_MODE=true.")
+
 
     # ── Load image ────────────────────────────────────────────────────────────
     try:
@@ -167,13 +265,21 @@ async def analyze_wound(
     quality = check_image_quality(image_bgr)
 
     # ── Step 2: Gemini Flash — photo QA + wound localization ─────────────────
-    from ai.gemini_vision import localize_wound
-    localization = _safe_gemini(
-        localize_wound, pil_image,
-        fallback={"wound_found": True, "wound_type": "unknown",
-                  "wound_type_confidence": 0.0, "photo_quality": {"pass": True}},
-        label="localize",
-    )
+    if wound_type:
+        localization = {
+            "wound_found": True,
+            "wound_type": wound_type,
+            "wound_type_confidence": 0.9,
+            "photo_quality": {"pass": True}
+        }
+    else:
+        from ai.gemini_vision import localize_wound
+        localization = _safe_gemini(
+            localize_wound, pil_image,
+            fallback={"wound_found": True, "wound_type": "unknown",
+                      "wound_type_confidence": 0.0, "photo_quality": {"pass": True}},
+            label="localize",
+        )
 
     # Photo quality gate — Gemini takes precedence over OpenCV
     gemini_quality = localization.get("photo_quality", {})
@@ -201,42 +307,30 @@ async def analyze_wound(
             "tip": "Place the coin flat and ensure it is fully visible with clear contrast.",
         }
 
-    # ── Step 4: Segmentation ──────────────────────────────────────────────────
-    # Use Gemini bbox_px if available, else fall back to click coords
-    bbox_px = localization.get("bbox_px")
+    # ── Step 4: Segmentation — use box prompt ────────────────────────────────
     try:
-        if bbox_px and not MOCK_MODE:
-            wound_mask = _segmenter.segment_with_box(
-                image_rgb,
-                bbox_px["x1"], bbox_px["y1"],
-                bbox_px["x2"], bbox_px["y2"],
-            )
-        elif click_x is not None and click_y is not None:
-            if MOCK_MODE:
-                wound_mask = _segmenter.segment(image_rgb, click_x, click_y, px_per_mm=px_per_mm)
-            else:
-                wound_mask = _segmenter.segment(image_rgb, click_x, click_y)
-        else:
-            # Fallback: use Gemini bbox midpoint as click
-            if bbox_px:
-                cx = (bbox_px["x1"] + bbox_px["x2"]) // 2
-                cy = (bbox_px["y1"] + bbox_px["y2"]) // 2
-                if MOCK_MODE:
-                    wound_mask = _segmenter.segment(image_rgb, cx, cy, px_per_mm=px_per_mm)
-                else:
-                    wound_mask = _segmenter.segment(image_rgb, cx, cy)
-            else:
-                raise HTTPException(400, "No click coords or wound bbox available.")
-    except HTTPException:
-        raise
+        wound_mask = _segment_with_box(image_rgb, box_px, _segmenter, MOCK_MODE)
     except Exception as e:
         raise HTTPException(500, f"Segmentation failed: {e}")
 
-    if wound_mask.sum() < 50:
-        return {
-            "status": "segmentation_failed",
-            "detail": "Wound region too small or could not be isolated. Try clicking directly on the wound.",
+    if wound_mask.sum() < 30:
+        # Try expanding box 20% and retry once
+        h, w = image_rgb.shape[:2]
+        exp = 0.20
+        dx, dy = int((box_x2-box_x1)*exp), int((box_y2-box_y1)*exp)
+        box_exp = {
+            "x1": max(0,box_x1-dx), "y1": max(0,box_y1-dy),
+            "x2": min(w,box_x2+dx), "y2": min(h,box_y2+dy),
         }
+        try:
+            wound_mask = _segment_with_box(image_rgb, box_exp, _segmenter, MOCK_MODE)
+        except Exception:
+            pass
+
+    if wound_mask.sum() < 30:
+        # Last resort: use box itself as mask
+        wound_mask = np.zeros(image_rgb.shape[:2], dtype=bool)
+        wound_mask[box_y1:box_y2, box_x1:box_x2] = True
 
     # ── Step 5: Geometry ──────────────────────────────────────────────────────
     geometry = compute_geometry(wound_mask, px_per_mm)
@@ -244,42 +338,83 @@ async def analyze_wound(
     # ── Step 6: Inflammation ──────────────────────────────────────────────────
     inflammation = compute_inflammation_index(image_bgr, wound_mask)
 
+    # ── Step 6b: LAB Colorimetry (deterministic tissue %, Wannous 2010) ───────
+    # Crop wound region for colorimetry (higher accuracy on the wound only)
+    h_img, w_img = image_rgb.shape[:2]
+    cx1 = max(0, box_x1); cy1 = max(0, box_y1)
+    cx2 = min(w_img, box_x2); cy2 = min(h_img, box_y2)
+    crop_rgb = image_rgb[cy1:cy2, cx1:cx2]
+    # Crop the mask too
+    crop_mask = wound_mask[cy1:cy2, cx1:cx2]
+    colorimetry = lab_tissue_analysis(crop_rgb, crop_mask)
+
     # ── Step 7: SegFormer tissue classification ───────────────────────────────
     tissue_raw = _tissue_clf.classify(image_rgb, wound_mask)
     seg_map    = tissue_raw.pop("seg_map", None)
     tissue_raw.pop("confidence_map", None)
 
-    # ── Step 8: Gemini Flash — BWAT 12-item ──────────────────────────────────
+    # ── Step 8: Gemini Flash — BWAT 12-item (3-view multi-image) ─────────────
     from ai.gemini_vision import assess_bwat
-    bwat = _safe_gemini(assess_bwat, pil_image, fallback={
-        "bwat_total": 0, "bwat_severity": "unknown",
-        "bwat": {}, "TIME": {}, "healing_phase": "unknown",
-        "biofilm_suspected": False, "moisture_balance": "unknown",
-        "infection_signs_visual": [], "overall_concern": "unknown",
-    }, label="bwat")
+    bwat = _safe_gemini(assess_bwat, pil_image,
+                        box_px=box_px, crop_rgb=crop_rgb, wound_mask=crop_mask,
+                        fallback={"bwat_total": 0, "bwat_severity": "unknown",
+                                  "bwat": {}, "TIME": {}, "healing_phase": "unknown",
+                                  "biofilm_suspected": False, "moisture_balance": "unknown",
+                                  "infection_signs_visual": [], "overall_concern": "unknown"},
+                        label="bwat")
 
-    # ── Step 9: Gemini Flash — tissue validation + blend ─────────────────────
-    from ai.gemini_vision import validate_tissue, blend_tissue
+    # ── Step 9: Gemini Flash — tissue validation + 3-way blend ───────────────
+    from ai.gemini_vision import validate_tissue
     validation = _safe_gemini(validate_tissue, pil_image, tissue_raw,
+                              box_px=box_px,
                               fallback={"overall_agreement": 1.0}, label="validate")
-    tissue = blend_tissue(tissue_raw, validation)
+    # 3-way blend: colorimetry + SegFormer + Gemini
+    tissue = three_way_tissue_blend(colorimetry, tissue_raw, validation)
 
     # ── Step 10: Load session history ─────────────────────────────────────────
     session_number  = get_session_count(patient_id) + 1
     session_history = get_session_history(patient_id, limit=10)
 
+    # ── Step 10b: Compute Gilman Parameter (Healing Velocity) ─────────────────
+    gilman_parameter = None
+    if session_history and len(session_history) > 0:
+        prev_session = session_history[0]
+        prev_area = prev_session.get("geometry", {}).get("area_cm2")
+        prev_perim = prev_session.get("geometry", {}).get("perimeter_cm")
+        curr_area = geometry.get("area_cm2")
+        curr_perim = geometry.get("perimeter_cm")
+        if prev_area and prev_perim and curr_area and curr_perim:
+            from datetime import datetime, timezone
+            prev_date_str = prev_session.get("session_date")
+            if prev_date_str:
+                try:
+                    if prev_date_str.endswith("Z"):
+                        prev_date_str = prev_date_str[:-1]
+                    prev_date = datetime.fromisoformat(prev_date_str)
+                    # Convert both to naive UTC or both aware. For simplicity:
+                    now = datetime.utcnow()
+                    # drop timezone info if any
+                    prev_date = prev_date.replace(tzinfo=None)
+                    days_diff = (now - prev_date).days
+                    if days_diff > 0:
+                        delta_area = prev_area - curr_area
+                        avg_perim = (prev_perim + curr_perim) / 2.0
+                        if avg_perim > 0:
+                            d_cm = delta_area / avg_perim
+                            gilman_cm_per_week = (d_cm / days_diff) * 7
+                            gilman_parameter = round(gilman_cm_per_week, 4)
+                except Exception as e:
+                    print(f"Gilman calculation error: {e}")
+    geometry["gilman_parameter_cm_per_week"] = gilman_parameter
+
     # ── Step 11: Gemini Flash — clinical synthesis ────────────────────────────
     from ai.gemini_vision import clinical_report as gemini_clinical
     assessment = _safe_gemini(
         gemini_clinical,
-        pil_image,
-        localization,
-        geometry,
-        tissue,
-        bwat,
-        inflammation,
-        session_number,
-        session_history,
+        pil_image, localization, geometry, tissue, bwat, inflammation,
+        session_number, session_history,
+        box_px=box_px,
+        colorimetry=colorimetry,
         fallback={"error": "Clinical synthesis unavailable"},
         label="clinical",
     )
@@ -347,7 +482,7 @@ async def analyze_wound(
             "wound_type":            localization.get("wound_type"),
             "wound_type_confidence": localization.get("wound_type_confidence"),
             "wound_type_reasoning":  localization.get("wound_type_reasoning"),
-            "auto_detected":         bbox_px is not None,
+            "auto_detected":         True,
         },
 
         "calibration": {

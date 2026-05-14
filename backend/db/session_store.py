@@ -21,12 +21,29 @@ def _supabase():
         return None
 
 
+def _get_uuid(pid: str) -> str:
+    try:
+        uuid.UUID(pid)
+        return pid
+    except ValueError:
+        return str(uuid.uuid5(uuid.NAMESPACE_OID, pid))
+
 def save_session(patient_id: str, session_data: dict) -> str:
     """Save a wound session. Returns session_id."""
     session_id = str(uuid.uuid4())
+    db_patient_id = _get_uuid(patient_id)
+    
+    # Ensure patient exists in Supabase
+    sb = _supabase()
+    if sb:
+        try:
+            sb.table("patients").insert({"id": db_patient_id}).execute()
+        except Exception:
+            pass # Already exists
+
     record = {
         "id":           session_id,
-        "patient_id":   patient_id,
+        "patient_id":   db_patient_id,
         "session_date": datetime.utcnow().isoformat(),
         **session_data,   # session_number comes from caller
     }
@@ -44,10 +61,11 @@ def get_session_history(patient_id: str, limit: int = 10) -> list[dict]:
     """Return up to `limit` most recent sessions for a patient."""
     sb = _supabase()
     if sb:
+        db_patient_id = _get_uuid(patient_id)
         resp = (
             sb.table("wound_sessions")
             .select("*")
-            .eq("patient_id", patient_id)
+            .eq("patient_id", db_patient_id)
             .order("session_date", desc=True)
             .limit(limit)
             .execute()

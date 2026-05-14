@@ -20,6 +20,7 @@ export interface Geometry {
   longest_axis_cm: number;
   shortest_axis_cm: number;
   aspect_ratio: number;
+  gilman_parameter_cm_per_week?: number | null;
 }
 
 export interface TissueBreakdown {
@@ -127,6 +128,7 @@ export interface ClinicalAssessment {
   infection_risk?: "LOW" | "MODERATE" | "HIGH" | "CRITICAL";
   healing_trajectory?: string;
   healing_velocity_cm2_per_day?: number;
+  gilman_velocity_cm_per_week?: number | null;
   area_reduction_pct?: number | null;
   forty_percent_rule?: FortyPercentRule;
   estimated_closure_days?: number | null;
