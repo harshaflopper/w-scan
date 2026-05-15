@@ -27,7 +27,7 @@ from typing import Optional
 import cv2
 import numpy as np
 from PIL import Image
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -232,6 +232,38 @@ def get_patient_history(patient_id: str, limit: int = 20):
     return {"patient_id": patient_id, "sessions": sessions, "count": len(sessions)}
 
 
+@app.get("/test-db")
+def test_db_connection():
+    from db.session_store import _supabase, save_session, get_session_history
+    import traceback
+    try:
+        sb = _supabase()
+        if not sb:
+            return {"status": "error", "message": "Supabase client not initialized. Check your .env file."}
+        
+        test_data = {
+            "session_number": 999,
+            "wound_type": "db_test",
+            "area_cm2": 3.14,
+            "patient_message": "Test successful",
+            "this_field_goes_to_raw_json": True
+        }
+        
+        session_id = save_session("test_user_123", test_data)
+        
+        history = get_session_history("test_user_123")
+        
+        return {
+            "status": "success",
+            "message": "Supabase insert and select worked perfectly!",
+            "session_id": session_id,
+            "history_length": len(history),
+            "recovered_raw_json_field": history[0].get("this_field_goes_to_raw_json") if history else None
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
+
+
 # ── Main analysis endpoint ────────────────────────────────────────────────────
 # ── Main analysis endpoint ────────────────────────────────────────────────────
 @app.post("/analyze")
@@ -245,6 +277,7 @@ async def analyze_wound(
     box_y1:    int               = Form(...),
     box_x2:    int               = Form(...),
     box_y2:    int               = Form(...),
+    tracking_wound_type: Optional[str] = Form(None),
 ):
     box_px = {"x1": box_x1, "y1": box_y1, "x2": box_x2, "y2": box_y2}
     if _segmenter is None or _tissue_clf is None:
@@ -372,8 +405,15 @@ async def analyze_wound(
     tissue = three_way_tissue_blend(colorimetry, tissue_raw, validation)
 
     # ── Step 10: Load session history ─────────────────────────────────────────
+    if tracking_wound_type:
+        localization["wound_type"] = tracking_wound_type
+        
     session_number  = get_session_count(patient_id) + 1
-    session_history = get_session_history(patient_id, limit=10)
+    raw_history = get_session_history(patient_id, limit=50)
+    
+    # Filter history strictly to the wound type being tracked/scanned
+    target_type = localization.get("wound_type")
+    session_history = [s for s in raw_history if s.get("wound_type") == target_type][:10]
 
     # ── Step 10b: Compute Gilman Parameter (Healing Velocity) ─────────────────
     gilman_parameter = None
@@ -427,9 +467,19 @@ async def analyze_wound(
     )
 
     # ── Step 12: Save session ─────────────────────────────────────────────────
+    # Resolve the best wound_type:
+    # Priority: explicit tracking lock > Gemini confirmed name > localization AI guess
+    resolved_wound_type = (
+        tracking_wound_type
+        or assessment.get("wound_type_confirmed")
+        or localization.get("wound_type", "unknown")
+    )
+    # Normalize: strip whitespace, lowercase for consistent folder grouping
+    resolved_wound_type = resolved_wound_type.strip().lower() if resolved_wound_type else "unknown"
+
     session_record = {
         "session_number":      session_number,
-        "wound_type":          localization.get("wound_type", "unknown"),
+        "wound_type":          resolved_wound_type,
         "wound_type_confidence": localization.get("wound_type_confidence", 0),
         "area_cm2":            geometry.get("area_cm2", 0),
         "perimeter_cm":        geometry.get("perimeter_cm", 0),
@@ -455,12 +505,23 @@ async def analyze_wound(
         "stones_score":        assessment.get("stones", {}).get("score"),
         "infection_risk":      assessment.get("infection_risk", "UNKNOWN"),
         "healing_trajectory":  assessment.get("healing_trajectory", "FIRST_SESSION"),
-        "est_closure_days":    assessment.get("estimated_closure_days"),
+        "est_closure_days":    assessment.get("estimated_closure_days") or _calc_est_closure(geometry, gilman_parameter),
         "composite_score":     composite,
+        "clinician_report":    assessment.get("clinician_report"),
+        "patient_message":     assessment.get("patient_message"),
         "clinical_report_json": assessment,
     }
     try:
-        session_id = save_session(patient_id, session_record)
+        import io
+        img_byte_arr = io.BytesIO()
+        pil_image.save(img_byte_arr, format='JPEG', quality=85)
+        img_bytes = img_byte_arr.getvalue()
+        # Debug: confirm AI report is non-empty before saving
+        print(f"[save] wound_type={session_record.get('wound_type')} "
+              f"patient_msg={bool(session_record.get('patient_message'))} "
+              f"clinician_report={bool(session_record.get('clinician_report'))} "
+              f"bwat={session_record.get('bwat_total')}")
+        session_id = save_session(patient_id, session_record, original_image_bytes=img_bytes)
     except Exception as e:
         session_id = None
         print(f"[session] save failed: {e}")
@@ -505,7 +566,7 @@ async def analyze_wound(
             "primary_score":     assessment.get("primary_score"),
             "nerds":             assessment.get("nerds"),
             "stones":            assessment.get("stones"),
-            "estimated_closure_days": assessment.get("estimated_closure_days"),
+            "estimated_closure_days": assessment.get("estimated_closure_days") or _calc_est_closure(geometry, gilman_parameter),
             "forty_percent_rule":     assessment.get("forty_percent_rule"),
         },
 
@@ -606,3 +667,97 @@ def _build_trend(history: list, current: dict) -> dict:
         "session_dates":  [s.get("session_date", "")[:10] for s in all_sessions],
         "session_numbers":[s.get("session_number", 0)   for s in all_sessions],
     }
+
+
+def _calc_est_closure(geometry: dict, gilman_parameter: float | None) -> int | None:
+    if not gilman_parameter or gilman_parameter <= 0:
+        return None
+    # Gilman parameter is edge advancement in cm/week.
+    # Time to close = (shortest_axis / 2) / gilman_parameter
+    shortest_axis = geometry.get("shortest_axis_cm")
+    if shortest_axis and shortest_axis > 0:
+        weeks_to_close = (shortest_axis / 2.0) / gilman_parameter
+        return int(weeks_to_close * 7)
+    return None
+
+
+# ── Active Tracking & Guidance Engine ───────────────────────────────────────
+from datetime import datetime, timedelta
+
+@app.get("/tracking/{patient_id}")
+async def get_tracking_dashboard(patient_id: str):
+    """
+    Returns the active tracking state, triage matrix, and trend data.
+    """
+    from db.session_store import get_session_history
+    history = get_session_history(patient_id, limit=30)
+    
+    if not history:
+        return {"status": "NO_HISTORY", "triage": None, "schedule": None, "trend": None}
+        
+    latest = history[0]
+    
+    # 1. Triage Escalation Matrix
+    triage_status = "MAINTENANCE"
+    triage_message = "Your wound is tracking normally. Continue your active care plan."
+    
+    # Clinical Assessment Data
+    ca = latest.get("clinical_assessment", {})
+    infection_risk = ca.get("infection_risk", "LOW")
+    gilman = ca.get("gilman_velocity_cm_per_week")
+    
+    # Check ER Case
+    if infection_risk in ["HIGH", "CRITICAL"]:
+        triage_status = "ER_REQUIRED"
+        triage_message = "URGENT MEDICAL REVIEW REQUIRED: Severe signs of infection detected."
+    # Check Specialist Case
+    elif gilman is not None and gilman < 0.1 and len(history) > 2:
+        triage_status = "SPECIALIST_REQUIRED"
+        triage_message = "Wound healing is stalled. Advanced clinical intervention is required."
+        
+    # 2. Dynamic Scan Scheduling
+    # Infected -> 24h, Sloughy/High Exudate -> 72h, Granulating -> 7d
+    scan_interval_days = 3 # Default
+    if triage_status == "ER_REQUIRED":
+        scan_interval_days = 1
+    else:
+        # Check tissue composition for scan interval
+        granulation = latest.get("granulation_pct", 0)
+        if granulation > 80:
+            scan_interval_days = 7 # Do not disturb new tissue
+            
+    last_scan_date = datetime.fromisoformat(latest.get("session_date", datetime.utcnow().isoformat())[:19])
+    next_scan_date = last_scan_date + timedelta(days=scan_interval_days)
+    
+    # 3. Build trend chart
+    trend = _build_trend(history[1:], latest) if len(history) > 1 else _build_trend([], latest)
+    
+    return {
+        "status": "ACTIVE",
+        "triage": {
+            "status": triage_status,
+            "message": triage_message
+        },
+        "schedule": {
+            "last_scan_date": last_scan_date.isoformat(),
+            "next_scan_date": next_scan_date.isoformat(),
+            "interval_days": scan_interval_days
+        },
+        "latest_care_plan": ca.get("care_plan", {}),
+        "trend": trend,
+        "history": history
+    }
+
+@app.delete("/tracking/wound/{wound_type}")
+async def delete_wound_folder(wound_type: str, patient_id: str = Query(...)):
+    """Deletes all scans associated with a specific wound folder."""
+    try:
+        from db.session_store import _supabase, _get_uuid
+        sb = _supabase()
+        db_patient = _get_uuid(patient_id)
+        
+        # Delete all sessions for this wound_type and patient
+        sb.table("wound_sessions").delete().eq("patient_id", db_patient).eq("wound_type", wound_type).execute()
+        return {"status": "success", "message": f"Wound folder '{wound_type}' deleted."}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to delete wound folder: {e}")

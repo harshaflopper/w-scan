@@ -104,6 +104,9 @@ export interface CarePlan {
   antimicrobial_needed: boolean;
   review_frequency_days: number;
   specific_actions: string[];
+  care_video_youtube_id?: string;
+  product_name?: string;
+  product_search_query?: string;
 }
 
 export interface FortyPercentRule {

@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { Routes, Route, Link, useNavigate, useLocation } from "react-router-dom";
-import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/clerk-react";
+import { Routes, Route, Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { SignedIn, SignedOut, SignInButton, UserButton, useUser, RedirectToSignIn } from "@clerk/clerk-react";
 import { LayoutDashboard, Camera, Activity, FileText, UploadCloud, ChevronRight, Settings } from "lucide-react";
 
 import BoxDrawCanvas from "./components/BoxDrawCanvas";
 import ResultsPanel from "./components/ResultsPanel";
+import TrackingDashboard from "./components/TrackingDashboard";
 import { fetchCoins, analyzeWound, suggestBox } from "./api";
 import type { BoxCoords, SuggestBoxResponse } from "./api";
 import type { CoinOption, AnalysisResult } from "./types";
@@ -14,19 +15,21 @@ import "./App.css";
 type Step = "upload" | "configure" | "processing" | "results";
 
 const PROCESSING_STEPS = [
-  { msg: "Checking photo quality" },
-  { msg: "Detecting wound location" },
-  { msg: "Calibrating scale" },
-  { msg: "Segmenting wound boundary" },
-  { msg: "Computing geometry & area" },
-  { msg: "Analysing tissue composition" },
-  { msg: "Clinical assessment" },
-  { msg: "Generating report" },
+  { msg: "Validating Image Quality & Exposure" },
+  { msg: "Calibrating Spatial Geometry & Scale" },
+  { msg: "Running MedSAM-B2 Segmentation" },
+  { msg: "Extracting Wound Boundaries" },
+  { msg: "Quantifying Tissue (Granulation vs Slough)" },
+  { msg: "Analyzing Periwound Inflammation" },
+  { msg: "Cross-referencing BWAT Heuristics" },
+  { msg: "Synthesizing Clinical Evidence" },
 ];
 
 // ─── WIZARD COMPONENT ──────────────────────────────────────────────
 function ScanWizard() {
   const { user } = useUser();
+  const [searchParams] = useSearchParams();
+  const trackingWoundType = searchParams.get("wound") || undefined;
   const [coins, setCoins] = useState<CoinOption[]>([]);
   const [step, setStep] = useState<Step>("upload");
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -86,6 +89,7 @@ function ScanWizard() {
         image: imageFile, coinType, patientId,
         box: confirmedBox,
         woundType: woundTypeHint || undefined,
+        trackingWoundType: trackingWoundType,
       });
       setResult(res);
       setStep(res.status === "success" ? "results" : "configure");
@@ -101,6 +105,17 @@ function ScanWizard() {
 
   return (
     <div className="wizard-container">
+      {/* TRACKING CONTEXT BANNER */}
+      {trackingWoundType && (
+        <div className="animate-fade-in" style={{ background: "rgba(180,139,108,0.08)", border: "1px solid rgba(180,139,108,0.2)", borderRadius: 12, padding: "0.85rem 1.25rem", marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <Activity size={16} color="var(--tertiary)" />
+          <div>
+            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Updating wound: </span>
+            <span style={{ fontWeight: 600, color: "var(--tertiary)", textTransform: "capitalize" }}>{trackingWoundType}</span>
+          </div>
+          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginLeft: "auto" }}>AI will compare against your last scan</span>
+        </div>
+      )}
       {/* STEPS INDICATOR */}
       <div className="stepper">
         {["Upload", "Calibration", "Analysis", "Results"].map((label, idx) => {
@@ -188,10 +203,28 @@ function ScanWizard() {
 
       {/* PROCESSING STEP */}
       {step === "processing" && (
-        <div className="animate-fade-in card" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "400px" }}>
-          <div className="spinner"></div>
-          <h2 style={{ marginTop: "2rem", color: "var(--text-primary)" }}>{PROCESSING_STEPS[processingIdx].msg}...</h2>
-          <p className="text-muted" style={{ marginTop: "0.5rem" }}>Step {processingIdx + 1} of {PROCESSING_STEPS.length}</p>
+        <div className="animate-fade-in card" style={{ position: "relative", overflow: "hidden", minHeight: "400px", padding: 0, border: "1px solid var(--tertiary)", borderRadius: "var(--r-md)" }}>
+          {/* Background Image with Overlay */}
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
+            {imageFile && (
+              <img src={URL.createObjectURL(imageFile)} alt="Scanning" style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(4px) brightness(0.2)" }} />
+            )}
+            <div className="scan-line"></div>
+          </div>
+          
+          {/* Content overlay */}
+          <div style={{ position: "relative", zIndex: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "400px", padding: "2rem", textAlign: "center" }}>
+            <div className="radar-spinner" style={{ marginBottom: "2rem" }}></div>
+            <h2 style={{ color: "var(--text-primary)", fontSize: "1.8rem", textShadow: "0 2px 10px rgba(0,0,0,0.5)", marginBottom: "0.5rem" }}>
+              {PROCESSING_STEPS[processingIdx].msg}...
+            </h2>
+            <div style={{ width: "60%", height: "4px", background: "rgba(255,255,255,0.1)", borderRadius: "2px", overflow: "hidden", marginTop: "1rem" }}>
+               <div style={{ height: "100%", width: `${((processingIdx + 1) / PROCESSING_STEPS.length) * 100}%`, background: "var(--tertiary)", transition: "width 0.5s ease" }}></div>
+            </div>
+            <p style={{ color: "var(--flesh-tone)", marginTop: "1rem", fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+              STEP {processingIdx + 1} OF {PROCESSING_STEPS.length}
+            </p>
+          </div>
         </div>
       )}
 
@@ -216,54 +249,67 @@ function DashboardLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   return (
     <div className="app-layout">
-      {/* FLOATING TOP NAV */}
-      <header className="top-nav">
-        <div className="nav-brand">
-          <Activity color="var(--teal)" size={32} strokeWidth={2.5} />
-          <span>WoundScan</span>
-        </div>
-        
-        <nav className="nav-links">
-          <Link to="/" className={`nav-link ${location.pathname === "/" ? "active" : ""}`}>
-            <LayoutDashboard size={18} /> Dashboard
-          </Link>
-          <Link to="/scan" className={`nav-link ${location.pathname === "/scan" ? "active" : ""}`}>
-            <Camera size={18} /> New Scan
-          </Link>
-          <Link to="/history" className={`nav-link ${location.pathname === "/history" ? "active" : ""}`}>
-            <FileText size={18} /> History
-          </Link>
-        </nav>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          <Settings size={20} color="var(--text-muted)" style={{ cursor: "pointer" }} />
-          <UserButton showName />
-        </div>
-      </header>
+      {/* MINIMALIST TOP BRANDING */}
+      <div className="top-brand">
+        <Activity color="var(--tertiary)" size={24} />
+        WoundScan
+      </div>
 
       {/* MAIN CONTENT */}
       <main className="main-content">
         {children}
       </main>
+
+      {/* REFERENCE FLOATING DOCK */}
+      <nav className="dock-container">
+        <Link to="/" className={`dock-link ${location.pathname === "/" ? "active" : ""}`} title="Home">
+          <LayoutDashboard size={20} />
+        </Link>
+        <Link to="/scan" className={`dock-link ${location.pathname === "/scan" ? "active" : ""}`} title="New Scan">
+          <Camera size={20} />
+        </Link>
+        <Link to="/tracking" className={`dock-link ${location.pathname === "/tracking" ? "active" : ""}`} title="Tracking">
+          <Activity size={20} />
+        </Link>
+        <div style={{ width: "1px", height: "24px", background: "var(--border)", margin: "0 0.5rem" }}></div>
+        <UserButton />
+      </nav>
     </div>
   );
 }
 
-// ─── LANDING PAGE (Signed Out) ─────────────────────────────────────
-function LandingPage() {
+// LandingPage removed as requested, using RedirectToSignIn directly.
+
+// ─── HOME PAGE ─────────────────────────────────────────────────────
+function EmptyHome() {
+  const navigate = useNavigate();
   return (
-    <div className="landing-page">
-      <div className="landing-content">
-        <Activity color="var(--teal)" size={64} style={{ marginBottom: "2rem" }} />
-        <h1 style={{ fontSize: "3.5rem", fontWeight: 800, marginBottom: "1rem", letterSpacing: "-0.05em" }}>WoundScan AI</h1>
-        <p style={{ fontSize: "1.2rem", color: "var(--text-secondary)", marginBottom: "3rem", maxWidth: "600px", lineHeight: 1.6 }}>
-          The professional clinical platform for proactive wound healing, tissue analysis, and automated treatment matchmaking.
+    <div className="animate-fade-in" style={{ maxWidth: 700, margin: "0 auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "70vh", textAlign: "center", gap: "2rem" }}>
+      <div style={{ width: 90, height: 90, borderRadius: "50%", background: "rgba(180,139,108,0.1)", border: "1px solid rgba(180,139,108,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Activity size={42} color="var(--tertiary)" />
+      </div>
+      <div>
+        <h1 style={{ fontSize: "2.5rem", marginBottom: "0.75rem", letterSpacing: "-0.04em" }}>WoundScan <span style={{ color: "var(--tertiary)" }}>AI</span></h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "1.05rem", maxWidth: 480, margin: "0 auto", lineHeight: 1.7 }}>
+          Clinical-grade wound tracking powered by AI. Scan, compare, and monitor healing progress over time.
         </p>
-        <SignInButton mode="modal">
-          <button className="btn btn-primary" style={{ padding: "1rem 2.5rem", fontSize: "1.2rem", borderRadius: "50px" }}>
-            Secure Clinical Login
-          </button>
-        </SignInButton>
+      </div>
+      <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", justifyContent: "center" }}>
+        <button onClick={() => navigate("/scan")} className="btn btn-primary" style={{ padding: "0.9rem 2rem", fontSize: "1rem" }}>
+          <Camera size={18} /> New Scan
+        </button>
+        <button onClick={() => navigate("/tracking")} className="btn btn-ghost" style={{ padding: "0.9rem 2rem", fontSize: "1rem" }}>
+          <FileText size={18} /> View Tracking
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem", width: "100%", marginTop: "1rem" }}>
+        {[{ icon: <Camera size={20}/>, label: "Scan", desc: "Upload wound photo" }, { icon: <Activity size={20}/>, label: "Analyse", desc: "AI tissue segmentation" }, { icon: <FileText size={20}/>, label: "Track", desc: "Compare & monitor" }].map((item, i) => (
+          <div key={i} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: 12, padding: "1.25rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem" }}>
+            <div style={{ color: "var(--tertiary)" }}>{item.icon}</div>
+            <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{item.label}</div>
+            <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{item.desc}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -272,25 +318,24 @@ function LandingPage() {
 // ─── APP COMPONENT ─────────────────────────────────────────────────
 export default function App() {
   return (
-    <>
-      <SignedOut>
-        <LandingPage />
-      </SignedOut>
-
-      <SignedIn>
-        <DashboardLayout>
-          <Routes>
-            <Route path="/" element={
-              <div className="animate-fade-in">
-                <h1 style={{ marginBottom: "2rem" }}>Welcome to WoundScan</h1>
-                <p className="text-secondary" style={{ fontSize: "1.1rem" }}>Select "New Scan" from the menu to begin tracking a patient's wound.</p>
-              </div>
-            } />
-            <Route path="/scan" element={<ScanWizard />} />
-            <Route path="/history" element={<div className="animate-fade-in card"><h2>History</h2><p className="text-muted">Coming soon...</p></div>} />
-          </Routes>
-        </DashboardLayout>
-      </SignedIn>
-    </>
+    <DashboardLayout>
+      <Routes>
+        <Route path="/" element={<EmptyHome />} />
+        
+        <Route path="/scan" element={
+          <>
+            <SignedIn><ScanWizard /></SignedIn>
+            <SignedOut><RedirectToSignIn /></SignedOut>
+          </>
+        } />
+        
+        <Route path="/tracking" element={
+          <>
+            <SignedIn><TrackingDashboard /></SignedIn>
+            <SignedOut><RedirectToSignIn /></SignedOut>
+          </>
+        } />
+      </Routes>
+    </DashboardLayout>
   );
 }

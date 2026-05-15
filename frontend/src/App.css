@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────────────────────
-   App-level layout styles for WoundScan Pro (Ultra-Modern Spatial/Bento Design)
+   App-level layout styles for WoundScan Pro (Reference Floating Dock Layout)
 ───────────────────────────────────────────────────────────────────────────── */
 
 /* Full Layout */
@@ -9,189 +9,144 @@
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background-color: transparent;
+  background-color: var(--bg-base);
 }
 
-/* Floating Top Navigation (Replacing Boring Sidebar) */
-.top-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.5rem 3rem;
-  background: transparent;
+/* Floating Bottom Dock (Reference UI) */
+.dock-container {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 100;
-}
-
-.nav-brand {
   display: flex;
   align-items: center;
-  gap: 1rem;
-}
-
-.nav-brand span {
-  font-family: "Outfit", sans-serif;
-  font-size: 1.8rem;
-  font-weight: 800;
-  letter-spacing: -0.05em;
-  background: linear-gradient(90deg, #fff, var(--teal));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.nav-links {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: rgba(20, 20, 30, 0.4);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  padding: 0.5rem;
+  gap: 1.5rem;
+  background: var(--bg-surface);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 0.75rem 2rem;
   border-radius: 100px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.05);
 }
 
-.nav-link {
+.dock-link {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1.25rem;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
   color: var(--text-secondary);
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 0.95rem;
-  border-radius: 100px;
-  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  border-radius: 12px;
+  transition: all 0.2s ease;
 }
 
-.nav-link:hover {
+.dock-link:hover {
   color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.nav-link.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+.dock-link.active {
+  background: #EAEAEA;
+  color: var(--primary-dark);
+}
+
+/* Top Branding (Minimalist) */
+.top-brand {
+  position: fixed;
+  top: 2rem;
+  left: 2rem;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 1.2rem;
 }
 
 /* Main Content Area */
 .main-content {
   flex: 1;
   overflow-y: auto;
-  padding: 2rem 5%;
+  padding: 6rem 5% 8rem 5%; /* padding for top brand and bottom dock */
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-/* Landing Page - Expansive Spatial Design */
+/* Landing Page - Minimalist Earthy Design */
 .landing-page {
   height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Cinematic Background Glows */
-.landing-page::before {
-  content: '';
-  position: absolute;
-  top: -10%; left: 20%;
-  width: 800px; height: 800px;
-  background: radial-gradient(circle, rgba(0, 255, 209, 0.15) 0%, transparent 60%);
-  border-radius: 50%;
-  filter: blur(80px);
-  z-index: 0;
-}
-
-.landing-page::after {
-  content: '';
-  position: absolute;
-  bottom: -20%; right: 10%;
-  width: 600px; height: 600px;
-  background: radial-gradient(circle, rgba(138, 43, 226, 0.15) 0%, transparent 60%);
-  border-radius: 50%;
-  filter: blur(80px);
-  z-index: 0;
+  background: var(--bg-base);
 }
 
 .landing-content {
-  position: relative;
-  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
-  max-width: 900px;
+  max-width: 600px;
+  text-align: center;
 }
 
-/* Wizard Container - Minimalist */
+.landing-content h1 {
+  font-size: 4rem;
+  letter-spacing: -0.05em;
+  margin-bottom: 1rem;
+}
+
+/* Wizard Container */
 .wizard-container {
   width: 100%;
-  max-width: 1100px;
+  max-width: 800px;
   margin: 0 auto;
 }
 
-/* Stepper Component - Sleek Linear Style */
+/* Stepper Component */
 .stepper {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2rem;
+  gap: 1rem;
   margin-bottom: 4rem;
   width: 100%;
 }
 
 .step {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   color: var(--text-muted);
-  font-family: "Outfit", sans-serif;
-  font-weight: 600;
-  font-size: 0.95rem;
-  position: relative;
+  font-size: 0.85rem;
 }
 
 .step.active {
-  color: var(--teal);
-}
-
-.step.passed {
   color: var(--text-primary);
 }
 
+.step.passed {
+  color: var(--text-secondary);
+}
+
 .step-indicator {
-  width: 40px;
-  height: 4px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  transition: all 0.4s ease;
+  width: 60px;
+  height: 2px;
+  background: var(--border);
 }
 
-.step.active .step-indicator {
-  background: var(--teal);
-  box-shadow: 0 0 10px var(--teal);
-}
+.step.active .step-indicator { background: var(--text-primary); }
+.step.passed .step-indicator { background: var(--text-secondary); }
 
-.step.passed .step-indicator {
-  background: var(--text-primary);
-}
-
-/* Upload Step - Immersive Drag & Drop */
+/* Upload Dropzone */
 .upload-card {
   padding: 0;
   background: transparent;
   border: none;
-  box-shadow: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
 }
 
 .drop-zone {
@@ -200,37 +155,22 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  max-width: 800px;
-  height: 380px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 32px;
+  height: 300px;
+  border: 2px dashed var(--border-bright);
+  border-radius: var(--r-md);
   cursor: pointer;
-  transition: all 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
-  background: linear-gradient(180deg, rgba(20, 20, 30, 0.5) 0%, rgba(10, 10, 15, 0.8) 100%);
-  backdrop-filter: blur(20px);
-  margin-top: 3rem;
-  position: relative;
-  overflow: hidden;
-}
-
-.drop-zone::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; width: 100%; height: 100%;
-  background: radial-gradient(circle at center, rgba(0, 255, 209, 0.05), transparent 70%);
-  opacity: 0;
-  transition: opacity 0.4s;
+  background: rgba(255, 255, 255, 0.02);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-top: 2rem;
 }
 
 .drop-zone:hover {
-  border-color: rgba(0, 255, 209, 0.3);
-  transform: translateY(-8px) scale(1.01);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 255, 209, 0.1);
+  border-color: var(--tertiary);
+  background: rgba(180, 139, 108, 0.05);
+  transform: translateY(-2px);
 }
-.drop-zone:hover::before { opacity: 1; }
 
 .drop-zone-content {
-  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -241,83 +181,50 @@
 .configure-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
-  gap: 2rem;
-  width: 100%;
-}
-
-.modern-select {
-  width: 100%;
-  padding: 1rem 1.25rem;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255,255,255,0.1);
-  color: var(--text-primary);
-  border-radius: var(--r-md);
-  font-size: 1rem;
-  outline: none;
-  transition: all 0.3s ease;
-  appearance: none;
-}
-
-.modern-select:focus {
-  border-color: var(--teal);
-  background: rgba(0, 0, 0, 0.5);
-  box-shadow: 0 0 0 2px rgba(0, 255, 209, 0.2);
-}
-
-/* Spinner */
-.spinner {
-  width: 80px;
-  height: 80px;
-  border: 2px solid rgba(255,255,255,0.05);
-  border-top: 2px solid var(--teal);
-  border-right: 2px solid var(--purple-accent);
-  border-radius: 50%;
-  animation: spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-  display: inline-block;
-}
-
-/* Bento Grid System for ResultsPanel */
-.bento-grid {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  grid-auto-rows: minmax(100px, auto);
   gap: 1.5rem;
   width: 100%;
 }
 
+/* Spinner */
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--border);
+  border-top: 2px solid var(--flesh-tone);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+/* Results Bento */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 1rem;
+  width: 100%;
+}
+
 .bento-item {
-  background: rgba(20, 20, 30, 0.4);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 24px;
-  padding: 2rem;
+  background: var(--bg-surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   position: relative;
-  transition: transform 0.3s ease, border-color 0.3s ease;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.3);
 }
 
 .bento-item:hover {
+  border-color: var(--border-bright);
   transform: translateY(-2px);
-  border-color: rgba(255,255,255,0.1);
+  box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.4);
 }
 
-/* Specific Bento Sizes */
 .bento-large { grid-column: span 12; }
 @media (min-width: 1024px) {
   .bento-large { grid-column: span 8; }
-  .bento-medium { grid-column: span 6; }
-  .bento-small { grid-column: span 4; }
+  .bento-medium { grid-column: span 4; }
 }
-
-/* Animations */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(20px) scale(0.98); filter: blur(10px); }
-  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-.animate-fade-in { animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }

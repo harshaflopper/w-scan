@@ -353,47 +353,10 @@ def blend_tissue(cv_tissue: dict, validation: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # ROLE D — Clinical Synthesis (evidence-based, all data in)
 # ─────────────────────────────────────────────────────────────────────────────
-_CLINICAL_SYSTEM = """You are a wound care specialist AI with knowledge equivalent to a
-Certified Wound Care Nurse (CWCN) who has studied the following guidelines:
+_CLINICAL_SYSTEM_BASE = """You are a wound care specialist AI with knowledge equivalent to a
+Certified Wound Care Nurse (CWCN) who has studied the following dynamically retrieved guidelines:
 
-PRESSURE INJURIES (NPUAP/EPUAP/PPPIA 2019):
-  Staging: Stage I (non-blanchable erythema) → II (partial thickness) →
-           III (full thickness, no bone) → IV (bone/tendon/muscle exposed) →
-           Unstageable (slough/eschar covers base) → DTPI (deep tissue)
-  PUSH v3.0 = Area score (0-10) + Exudate (0-3) + Tissue type (0-4) = 0-17
-  Score trend: decrease of ≥2 points over 2 weeks = healing
-
-DIABETIC FOOT ULCERS (IWGDF 2023):
-  Wagner Grade: 0=no ulcer, 1=superficial, 2=deep to tendon, 3=osteomyelitis,
-                4=partial gangrene, 5=full foot gangrene
-  UT Classification: depth (0-3) × presence of infection/ischemia (A-D)
-  40% rule (Sheehan 2003, Diabetes Care): DFU not 40% smaller at week 4 → non-healing,
-    sensitivity 68%, specificity 77% — escalate treatment
-  Offloading: Total Contact Cast = gold standard (Grade A evidence, IWGDF)
-
-VENOUS LEG ULCERS (EWMA 2022):
-  CEAP: C1 (telangiectasia) → C6 (active ulcer)
-  RESVECH 2.0 (Perez-Acevedo 2019): 6 items × max 6 = 0-35, lower = better
-    Items: area, depth, edges, infection, granulation, epithelialization
-  Compression therapy: 40mmHg at ankle = Grade A for VLU healing
-  50% rule: VLU not 50% smaller at 12 weeks → vascular referral
-
-INFECTION — NERDS/STONES (Sibbald 2006, Adv Skin Wound Care):
-  NERDS (superficial critical colonisation, 5 criteria):
-    N=Non-healing despite optimal care, E=Exudate increasing, R=Red friable granulation,
-    D=Debris/discolouration, S=Smell
-  STONES (deep/surrounding infection, 6 criteria):
-    S=Size increasing, T=Temperature elevated, O=Os (bone probe positive),
-    N=New satellite areas, E=Erythema/edema, S=Smell
-  NERDS ≥3 → topical antimicrobial; STONES ≥3 → systemic antibiotics
-
-TIME FRAMEWORK (Schultz 2003, Wound Repair Regen):
-  T=Tissue (non-viable → debridement type needed)
-  I=Infection/Inflammation (local signs → systemic spread)
-  M=Moisture (desiccated → macerated, select dressing accordingly)
-  E=Edge (non-advancing → biological therapies, skin grafting)
-
-BWAT (Bates-Jensen 1995): 12-60 score, decrease of ≥3 pts per 2 weeks = healing
+{retrieved_guidelines}
 
 WOUND HEALING PHYSIOLOGY:
   Phase 1 Haemostasis: seconds to hours
@@ -413,7 +376,10 @@ RULES:
    - If Infection (NERDS >= 3): Suggest Silver/Antimicrobial dressing.
 5. In `patient_message`, DO NOT use jargon (like "BWAT" or "Epibolic"). If stalled, proactively explain exactly what dressing/ointment they should switch to using the matchmaker rules above.
 6. Give specific dressing recommendations per wound type and moisture balance in `care_plan`.
-7. Generate both a clinician report AND patient plain-English message"""
+7. PATIENT UI MULTIMEDIA (CRITICAL): 
+   - You MUST generate a realistic `product_name` (e.g. "Band-Aid Hydro Seal") and a `product_search_query` for an online pharmacy.
+   - You MUST provide a real YouTube Video ID for `care_video_youtube_id`. Use exactly "jfKfPfyJRdk" (a reliable embed placeholder) so the UI does not crash.
+8. Generate both a clinician report AND patient plain-English message"""
 
 _CLINICAL_TEMPLATE = """WOUND ASSESSMENT DATA — Session {session_number}
 
@@ -520,7 +486,10 @@ TASK: Generate a complete clinical assessment. Return ONLY valid JSON:
     "offloading_needed": false,
     "antimicrobial_needed": false,
     "review_frequency_days": 7,
-    "specific_actions": []
+    "specific_actions": [],
+    "care_video_youtube_id": "youtube_id_for_instructional_video",
+    "product_name": "Specific OTC product name (e.g., Band-Aid Hydro Seal)",
+    "product_search_query": "hydrocolloid+dressing+cvs"
   }},
   "red_flags": [],
   "alerts": [],
@@ -622,5 +591,10 @@ def clinical_report(
     from cv.colorimetry import crop_to_box
     img = crop_to_box(image_pil, box_px) if box_px else image_pil
 
-    resp = _model(system=_CLINICAL_SYSTEM).generate_content([prompt, img])
+    # RAG Injection
+    from ai.rag_service import get_clinical_guidelines_for_wound
+    retrieved_guidelines = get_clinical_guidelines_for_wound(localization.get("wound_type", "unknown"))
+    dynamic_system_prompt = _CLINICAL_SYSTEM_BASE.format(retrieved_guidelines=retrieved_guidelines)
+
+    resp = _model(system=dynamic_system_prompt).generate_content([prompt, img])
     return _parse(resp.text)

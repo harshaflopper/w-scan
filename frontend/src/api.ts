@@ -37,6 +37,7 @@ export interface AnalyzePayload {
   patientId?: string;
   box: BoxCoords;  // confirmed box in original image pixels — required
   woundType?: string; // from suggest-box, avoids duplicate Gemini call
+  trackingWoundType?: string; // Explicitly forces the scan to belong to an existing wound
 }
 
 export async function analyzeWound(payload: AnalyzePayload): Promise<AnalysisResult> {
@@ -49,7 +50,7 @@ export async function analyzeWound(payload: AnalyzePayload): Promise<AnalysisRes
   form.append("box_y2",   String(Math.round(payload.box.y2)));
   if (payload.patientId) form.append("patient_id", payload.patientId);
   if (payload.woundType) form.append("wound_type", payload.woundType);
-  if (payload.patientId) form.append("patient_id", payload.patientId);
+  if (payload.trackingWoundType) form.append("tracking_wound_type", payload.trackingWoundType);
 
   const res = await fetch(`${BASE}/analyze`, { method: "POST", body: form });
   if (!res.ok) {
