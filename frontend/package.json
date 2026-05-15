@@ -10,13 +10,17 @@
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.61.6",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.15.1",
-    "recharts": "^2.13.3"
+    "recharts": "^2.13.3",
+    "three": "^0.184.0",
+    "three-stdlib": "^2.36.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

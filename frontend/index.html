@@ -9,6 +9,11 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
+    <script>
+      window.onerror = function(msg, url, line, col, error) {
+        document.body.innerHTML = '<div style="color:red; background:black; padding:20px; font-family:monospace; height:100vh;"><h3>Global Error</h3><p>' + msg + '</p><pre>' + (error ? error.stack : '') + '</pre></div>';
+      };
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

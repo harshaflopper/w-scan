@@ -44,11 +44,11 @@ export default function TrackingDashboard() {
         <Activity size={36} color="var(--tertiary)" />
       </div>
       <div>
-        <h2 style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>No Wounds Tracked</h2>
-        <p style={{ color: "var(--text-muted)" }}>Take your first scan to start tracking a wound.</p>
+        <h2 style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>Not Found</h2>
+        <p style={{ color: "var(--text-muted)" }}>No wound history. Begin with a scan.</p>
       </div>
       <button onClick={() => navigate("/scan")} className="btn btn-primary" style={{ padding: "0.9rem 2rem", fontSize: "1rem" }}>
-        <Camera size={18} /> Start First Scan
+        <Camera size={18} /> New Scan
       </button>
     </div>
   );
@@ -66,8 +66,8 @@ export default function TrackingDashboard() {
   if (!selectedWoundType) return (
     <div className="animate-fade-in" style={{ maxWidth: 1000, margin: "0 auto", width: "100%" }}>
       <div style={{ marginBottom: "2.5rem" }}>
-        <h1 style={{ fontSize: "2rem", fontWeight: 700, letterSpacing: "-0.03em", marginBottom: "0.4rem" }}>Wound Directory</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.95rem" }}>Each folder tracks one wound's full healing history. Click to open.</p>
+        <h1 style={{ fontSize: "2rem", fontWeight: 700, letterSpacing: "-0.03em", marginBottom: "0.4rem" }}>Wounds</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>Select a wound to view its full history.</p>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1.25rem" }}>
@@ -276,20 +276,19 @@ export default function TrackingDashboard() {
                           </p>
                         )}
                         {session.care_plan?.product_name && (
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                              <Pill size={14} color="var(--tertiary)"/>
+                          <a href={`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(session.care_plan.product_search_query || session.care_plan.product_name)}`}
+                            target="_blank" rel="noreferrer" 
+                            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "1rem", background: "linear-gradient(145deg, rgba(180,139,108,0.15) 0%, rgba(180,139,108,0.05) 100%)", padding: "1rem", borderRadius: "10px", border: "1px solid rgba(180,139,108,0.2)", textDecoration: "none", transition: "all 0.2s ease" }}
+                            className="hover-lift">
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                              <div style={{ background: "rgba(180,139,108,0.2)", padding: "0.5rem", borderRadius: "8px" }}><Pill size={16} color="var(--tertiary)"/></div>
                               <div>
-                                <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Recommended</div>
-                                <div style={{ fontWeight: 600, color: "var(--text-primary)", fontSize: "0.9rem" }}>{session.care_plan.product_name}</div>
+                                <div style={{ fontSize: "0.7rem", color: "var(--tertiary)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.05em" }}>Pharmacy Suggestion</div>
+                                <div style={{ fontWeight: 500, color: "var(--text-primary)", fontSize: "0.95rem" }}>{session.care_plan.product_name}</div>
                               </div>
                             </div>
-                            <a href={`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(session.care_plan.product_search_query || session.care_plan.product_name)}`}
-                              target="_blank" rel="noreferrer" className="btn btn-ghost"
-                              style={{ padding: "0.4rem 0.9rem", fontSize: "0.8rem" }}>
-                              Buy / Find →
-                            </a>
-                          </div>
+                            <span style={{ color: "var(--tertiary)", fontSize: "0.8rem", fontWeight: 500 }}>Find →</span>
+                          </a>
                         )}
                       </div>
                     )}
