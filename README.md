@@ -9,46 +9,7 @@
 
 The system is built with a modern tech stack, separating frontend, backend, and computer vision pipelines for maximum scalability, performance, and security.
 
-```mermaid
-graph TD
-    %% Styling
-    classDef frontend fill:#212121,stroke:#61DAFB,stroke-width:2px,color:#fff;
-    classDef backend fill:#212121,stroke:#009688,stroke-width:2px,color:#fff;
-    classDef ai fill:#212121,stroke:#4285F4,stroke-width:2px,color:#fff;
-    classDef db fill:#212121,stroke:#3ECF8E,stroke-width:2px,color:#fff;
-    classDef user fill:#333,stroke:#fff,stroke-width:2px,color:#fff,stroke-dasharray: 5 5;
-
-    %% Nodes
-    User([👨‍⚕️ Clinician / 🤒 Patient]):::user
-    
-    subgraph Frontend [Client Layer - React/Vite]
-        UI[React Application]:::frontend
-        ThreeJS[Three.js 3D Background Engine]:::frontend
-        Clerk[Clerk Authentication]:::frontend
-    end
-    
-    subgraph Backend [Server Layer - FastAPI]
-        API[FastAPI Orchestrator]:::backend
-        CV[OpenCV Calibration & Geometry]:::backend
-    end
-    
-    subgraph Intelligence [AI & Data Layer]
-        Gemini[Google Gemini Vision AI]:::ai
-        DB[(Supabase PostgreSQL)]:::db
-    end
-
-    %% Edges
-    User -- "Uploads image & coin reference" --> UI
-    UI -- "Validates User" --> Clerk
-    UI -- "Multipart Form Data" --> API
-    API -- "Detects coin & extracts mask" --> CV
-    CV -- "Annotated Images & Area (cm²)" --> API
-    API -- "Clinical Prompts + Annotations" --> Gemini
-    Gemini -- "Returns JSON (BWAT, NERDS, Care Plan)" --> API
-    API -- "Persists Session History" --> DB
-    API -- "Returns Analysis Payload" --> UI
-    UI -- "Renders Dashboard & Graphs" --> User
-```
+![Mediscan AI Architecture](images/architecture.png)
 
 ### Tech Stack:
 
