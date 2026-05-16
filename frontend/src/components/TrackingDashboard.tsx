@@ -53,7 +53,7 @@ export default function TrackingDashboard() {
     </div>
   );
 
-  const { history } = data;
+  const history = data?.history || [];
   const woundsMap = new Map<string, any[]>();
   history.forEach((s: any) => {
     const key = (s.wound_type || "unknown wound").trim().toLowerCase();
