@@ -68,7 +68,7 @@ Here are some glimpses of the Mediscan application:
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/harshaflopper/w-scan.git
-    cd mediscan
+    cd m-scan
     ```
 
 ### Frontend Setup (`frontend` directory)
