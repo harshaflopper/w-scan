@@ -57,8 +57,8 @@ Here are some glimpses of the Mediscan application:
 
 ### Prerequisites
 
-*   Node.js (v18+)
-*   Python 3.10+
+*   reactjs
+*   python 3.10+
 *   Google Cloud Project with Gemini API Key
 *   Supabase Project (https://supabase.com/)
 *   Clerk Account (https://clerk.dev/)
@@ -67,7 +67,7 @@ Here are some glimpses of the Mediscan application:
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-username/mediscan.git
+    git clone https://github.com/harshaflopper/w-scan.git
     cd mediscan
     ```
 
