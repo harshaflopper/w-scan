@@ -18,7 +18,7 @@ export default function TissueBreakdownPanel({ tissue }: Props) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
         {TISSUES.map(({ key, label, color, note }) => {
-          const pct = (tissue as Record<string, number>)[key] ?? 0;
+          const pct = (tissue as any)[key] ?? 0;
           return (
             <div key={key}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
